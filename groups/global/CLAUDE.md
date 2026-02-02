@@ -54,3 +54,25 @@ Telegram-specific notes:
 - Messages are limited to 4096 characters (auto-split if longer)
 - Markdown formatting is supported
 - Private chats don't require the trigger word
+
+## Linear (Project Management)
+
+You have access to Linear via MCP tools for project management:
+
+**Query & Search:**
+- `mcp__linear__list_issues` - List issues with filters
+- `mcp__linear__get_issue` - Get details of a specific issue
+- `mcp__linear__search_issues` - Search issues by text
+- `mcp__linear__list_projects` - List all projects
+- `mcp__linear__list_teams` - List all teams
+
+**Create & Update:**
+- `mcp__linear__create_issue` - Create a new issue
+- `mcp__linear__update_issue` - Update an existing issue
+- `mcp__linear__create_comment` - Add a comment to an issue
+
+**Examples:**
+- "What's the status on the auth refactor issue?"
+- "Create a Linear issue for the bug we discussed"
+- "List all my open issues"
+- "Add a comment to ENG-123 saying the fix is deployed"

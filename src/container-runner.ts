@@ -124,7 +124,7 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   const envFile = path.join(projectRoot, '.env');
   if (fs.existsSync(envFile)) {
     const envContent = fs.readFileSync(envFile, 'utf-8');
-    const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+    const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'LINEAR_API_KEY'];
     const filteredLines = envContent
       .split('\n')
       .filter(line => {
@@ -436,4 +436,32 @@ export function writeGroupsSnapshot(
     groups: visibleGroups,
     lastSync: new Date().toISOString()
   }, null, 2));
+}
+
+/**
+ * Write Telegram pending approvals snapshot for the container to read.
+ * Only main group can see pending approvals.
+ */
+export function writeTelegramPendingSnapshot(
+  groupFolder: string,
+  isMain: boolean
+): void {
+  if (!isMain) return;  // Only main needs this
+
+  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  // Copy pending approvals to IPC directory
+  const sourcePath = path.join(DATA_DIR, 'telegram_pending_approvals.json');
+  const destPath = path.join(groupIpcDir, 'telegram_pending.json');
+
+  try {
+    if (fs.existsSync(sourcePath)) {
+      fs.copyFileSync(sourcePath, destPath);
+    } else {
+      fs.writeFileSync(destPath, '{}');
+    }
+  } catch (err) {
+    // Non-fatal, just log
+  }
 }

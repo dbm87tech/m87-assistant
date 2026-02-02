@@ -213,18 +213,33 @@ The task will run in that group's context with access to their files and memory.
 
 ## Telegram Integration
 
-Telegram chats are stored in `data/registered_telegram.json`. Private chats share context with this main channel (unified mode). Groups must be manually registered.
+Telegram chats are stored in `data/registered_telegram.json`. Private chats share context with this main channel (unified mode). Groups auto-register when the trigger word is used.
 
-To register a Telegram group, add an entry:
-```json
-{
-  "tg:CHAT_ID": {
-    "name": "Group Name",
-    "folder": "telegram-group-name",
-    "trigger": "@m87",
-    "added_at": "ISO_TIMESTAMP"
-  }
-}
-```
+### Access Control
 
-Get the chat ID by having someone send a message in the group - check logs for the ID.
+New Telegram users must be approved before they can use the bot. When someone messages the bot:
+1. You'll receive a notification here with their info
+2. Use `telegram_approve` or `telegram_deny` tools to manage access
+3. They'll be notified of the decision
+
+MCP Tools available:
+- `mcp__nanoclaw__telegram_approve(user_id)` - Approve a user
+- `mcp__nanoclaw__telegram_deny(user_id)` - Deny a user
+- `mcp__nanoclaw__telegram_list_pending()` - List pending requests
+
+Approved users are stored in `data/telegram_paired_users.json`.
+
+---
+
+## Linear Integration
+
+Linear project management is available via MCP tools. Use these for issue tracking:
+
+- `mcp__linear__list_issues` - List issues with filters
+- `mcp__linear__get_issue` - Get issue details by ID
+- `mcp__linear__search_issues` - Search by text
+- `mcp__linear__create_issue` - Create new issues
+- `mcp__linear__update_issue` - Update existing issues
+- `mcp__linear__create_comment` - Add comments
+
+Configuration: API key stored in `.env` as `LINEAR_API_KEY`.

@@ -23,7 +23,7 @@ import {
 import { RegisteredGroup, Session, NewMessage } from './types.js';
 import { initDatabase, storeMessage, storeChatMetadata, getNewMessages, getMessagesSince, getAllTasks, getTaskById, updateChatName, getAllChats, getLastGroupSync, setLastGroupSync } from './db.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { runContainerAgent, writeTasksSnapshot, writeGroupsSnapshot, AvailableGroup } from './container-runner.js';
+import { runContainerAgent, writeTasksSnapshot, writeGroupsSnapshot, writeTelegramPendingSnapshot, AvailableGroup } from './container-runner.js';
 import { loadJson, saveJson } from './utils.js';
 import { startTelegram, stopTelegram } from './telegram.js';
 
@@ -189,6 +189,9 @@ async function runAgent(group: RegisteredGroup, prompt: string, chatJid: string)
   const availableGroups = getAvailableGroups();
   writeGroupsSnapshot(group.folder, isMain, availableGroups, new Set(Object.keys(registeredGroups)));
 
+  // Update Telegram pending approvals snapshot (main only)
+  writeTelegramPendingSnapshot(group.folder, isMain);
+
   try {
     const output = await runContainerAgent(group, {
       prompt,
@@ -325,6 +328,8 @@ async function processTaskIpc(
     folder?: string;
     trigger?: string;
     containerConfig?: RegisteredGroup['containerConfig'];
+    // For telegram approval
+    userId?: number | string;
   },
   sourceGroup: string,  // Verified identity from IPC directory
   isMain: boolean       // Verified from directory path
@@ -467,6 +472,42 @@ async function processTaskIpc(
       } else {
         logger.warn({ data }, 'Invalid register_group request - missing required fields');
       }
+      break;
+
+    case 'telegram_approve':
+      // Only main group can approve Telegram users
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized telegram_approve attempt blocked');
+        break;
+      }
+      if (data.userId) {
+        const { approveUser } = await import('./telegram.js');
+        approveUser(Number(data.userId), 'main');
+        logger.info({ userId: data.userId }, 'Telegram user approved via IPC');
+      }
+      break;
+
+    case 'telegram_deny':
+      // Only main group can deny Telegram users
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized telegram_deny attempt blocked');
+        break;
+      }
+      if (data.userId) {
+        const { denyUser } = await import('./telegram.js');
+        denyUser(Number(data.userId));
+        logger.info({ userId: data.userId }, 'Telegram user denied via IPC');
+      }
+      break;
+
+    case 'telegram_list_pending':
+      // Only main group can list pending approvals
+      if (!isMain) {
+        break;
+      }
+      const { listPendingApprovals } = await import('./telegram.js');
+      const pending = listPendingApprovals();
+      logger.info({ pending }, 'Telegram pending approvals');
       break;
 
     default:

@@ -27,6 +27,197 @@ let getRegisteredGroups: (() => Record<string, RegisteredGroup>) | null = null;
 let getSessions: (() => Record<string, string>) | null = null;
 let setSessions: ((sessions: Record<string, string>) => void) | null = null;
 
+// Pairing system with admin approval
+interface PairedUser {
+  userId: number;
+  username?: string;
+  firstName?: string;
+  pairedAt: string;
+  approvedBy?: string;
+}
+
+interface PendingApproval {
+  userId: number;
+  username?: string;
+  firstName?: string;
+  requestedAt: string;
+  firstMessage: string;
+}
+
+function loadPairedUsers(): Record<number, PairedUser> {
+  const filePath = path.join(DATA_DIR, 'telegram_paired_users.json');
+  return loadJson(filePath, {});
+}
+
+function savePairedUsers(users: Record<number, PairedUser>): void {
+  const filePath = path.join(DATA_DIR, 'telegram_paired_users.json');
+  saveJson(filePath, users);
+}
+
+function loadPendingApprovals(): Record<number, PendingApproval> {
+  const filePath = path.join(DATA_DIR, 'telegram_pending_approvals.json');
+  return loadJson(filePath, {});
+}
+
+function savePendingApprovals(pending: Record<number, PendingApproval>): void {
+  const filePath = path.join(DATA_DIR, 'telegram_pending_approvals.json');
+  saveJson(filePath, pending);
+}
+
+function isUserPaired(userId: number): boolean {
+  const users = loadPairedUsers();
+  return !!users[userId];
+}
+
+function hasPendingApproval(userId: number): boolean {
+  const pending = loadPendingApprovals();
+  return !!pending[userId];
+}
+
+function requestApproval(userId: number, username?: string, firstName?: string, firstMessage?: string): void {
+  const pending = loadPendingApprovals();
+
+  // Don't re-request if already pending
+  if (pending[userId]) return;
+
+  pending[userId] = {
+    userId,
+    username,
+    firstName,
+    requestedAt: new Date().toISOString(),
+    firstMessage: firstMessage || ''
+  };
+  savePendingApprovals(pending);
+  logger.info({ userId, username }, 'Telegram access requested');
+}
+
+export function approveUser(userId: number, approvedBy?: string): boolean {
+  const pending = loadPendingApprovals();
+  const pendingUser = pending[userId];
+
+  // Also allow approving users not in pending (direct approval)
+  const users = loadPairedUsers();
+  users[userId] = {
+    userId,
+    username: pendingUser?.username,
+    firstName: pendingUser?.firstName,
+    pairedAt: new Date().toISOString(),
+    approvedBy
+  };
+  savePairedUsers(users);
+
+  // Remove from pending if present
+  if (pending[userId]) {
+    delete pending[userId];
+    savePendingApprovals(pending);
+  }
+
+  logger.info({ userId, approvedBy }, 'Telegram user approved');
+
+  // Notify the user via Telegram if bot is running
+  if (bot) {
+    bot.telegram.sendMessage(userId, `Access approved! You can now chat with me.`).catch(err => {
+      logger.debug({ err, userId }, 'Could not notify approved user');
+    });
+  }
+
+  return true;
+}
+
+export function denyUser(userId: number): boolean {
+  const pending = loadPendingApprovals();
+  if (pending[userId]) {
+    delete pending[userId];
+    savePendingApprovals(pending);
+    logger.info({ userId }, 'Telegram user denied');
+
+    // Notify the user
+    if (bot) {
+      bot.telegram.sendMessage(userId, `Access denied.`).catch(err => {
+        logger.debug({ err, userId }, 'Could not notify denied user');
+      });
+    }
+    return true;
+  }
+  return false;
+}
+
+export function listPendingApprovals(): PendingApproval[] {
+  const pending = loadPendingApprovals();
+  return Object.values(pending);
+}
+
+export function listPairedUsers(): PairedUser[] {
+  const users = loadPairedUsers();
+  return Object.values(users);
+}
+
+export function unpairUser(userId: number): boolean {
+  const users = loadPairedUsers();
+  if (users[userId]) {
+    delete users[userId];
+    savePairedUsers(users);
+    logger.info({ userId }, 'Telegram user unpaired');
+    return true;
+  }
+  return false;
+}
+
+function getMainChannelJid(): string | null {
+  // Read registered_groups.json to find the main channel's JID
+  const groupsFile = path.join(DATA_DIR, 'registered_groups.json');
+  try {
+    if (fs.existsSync(groupsFile)) {
+      const groups = JSON.parse(fs.readFileSync(groupsFile, 'utf-8'));
+      for (const [jid, group] of Object.entries(groups)) {
+        if ((group as any).folder === MAIN_GROUP_FOLDER) {
+          return jid;
+        }
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to read registered groups');
+  }
+  return null;
+}
+
+async function notifyAdminOfAccessRequest(
+  userId: number,
+  username?: string,
+  firstName?: string,
+  firstMessage?: string
+): Promise<void> {
+  // Find main channel JID
+  const mainJid = getMainChannelJid();
+  if (!mainJid) {
+    logger.warn('Cannot notify admin: main channel JID not found');
+    return;
+  }
+
+  // Write IPC message to main channel
+  const ipcDir = path.join(DATA_DIR, 'ipc', MAIN_GROUP_FOLDER, 'messages');
+  fs.mkdirSync(ipcDir, { recursive: true });
+
+  const userDisplay = username ? `@${username}` : firstName || `User ${userId}`;
+  const messagePreview = firstMessage
+    ? `\n\nFirst message: "${firstMessage.slice(0, 100)}${firstMessage.length > 100 ? '...' : ''}"`
+    : '';
+
+  const notification = {
+    type: 'message',
+    chatJid: mainJid,
+    text: `*Telegram Access Request*\n\n` +
+      `${userDisplay} (ID: ${userId}) wants to access the bot.${messagePreview}\n\n` +
+      `Reply:\n` +
+      `• "approve telegram ${userId}" to grant access\n` +
+      `• "deny telegram ${userId}" to reject`
+  };
+
+  const filename = `telegram-approval-${userId}-${Date.now()}.json`;
+  fs.writeFileSync(path.join(ipcDir, filename), JSON.stringify(notification));
+  logger.info({ userId, username, mainJid }, 'Admin notified of Telegram access request');
+}
+
 function loadTelegramChats(): Record<string, RegisteredGroup> {
   const filePath = path.join(DATA_DIR, 'registered_telegram.json');
   return loadJson(filePath, {});
@@ -115,6 +306,29 @@ async function handleMessage(ctx: Context): Promise<void> {
   logger.info({ chatId, chatType, from: fromUser }, 'Telegram message received');
 
   const isPrivate = chatType === 'private';
+  const userId = ctx.from?.id;
+  const firstName = ctx.from?.first_name;
+
+  // Check if user is paired (approved for access)
+  if (userId && !isUserPaired(userId)) {
+    if (hasPendingApproval(userId)) {
+      // Already requested, waiting for approval
+      await ctx.reply('Your access request is pending approval. Please wait.');
+      return;
+    }
+
+    // New user - request approval
+    requestApproval(userId, fromUsername, firstName, text);
+
+    // Notify admin via WhatsApp main channel
+    await notifyAdminOfAccessRequest(userId, fromUsername, firstName, text);
+
+    await ctx.reply(
+      `Welcome! I've sent an access request to the administrator.\n\n` +
+      `You'll be notified when your request is approved.`
+    );
+    return;
+  }
 
   // Check if private chats are enabled
   if (isPrivate && !TELEGRAM_CONFIG.privateChatsEnabled) {

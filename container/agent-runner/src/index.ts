@@ -243,13 +243,21 @@ async function main(): Promise<void> {
           'Bash',
           'Read', 'Write', 'Edit', 'Glob', 'Grep',
           'WebSearch', 'WebFetch',
-          'mcp__nanoclaw__*'
+          'mcp__nanoclaw__*',
+          'mcp__linear__*'
         ],
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         settingSources: ['project'],
         mcpServers: {
-          nanoclaw: ipcMcp
+          nanoclaw: ipcMcp,
+          linear: {
+            command: 'npx',
+            args: ['-y', 'mcp-linear'],
+            env: {
+              LINEAR_API_KEY: process.env.LINEAR_API_KEY || ''
+            }
+          }
         },
         hooks: {
           PreCompact: [{ hooks: [createPreCompactHook()] }]

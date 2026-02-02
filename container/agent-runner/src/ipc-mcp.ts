@@ -315,6 +315,125 @@ Use available_groups.json to find the JID for a group. The folder name should be
             }]
           };
         }
+      ),
+
+      tool(
+        'telegram_approve',
+        'Approve a Telegram user who requested access. Main group only.',
+        {
+          user_id: z.number().describe('The Telegram user ID to approve')
+        },
+        async (args) => {
+          if (!isMain) {
+            return {
+              content: [{ type: 'text', text: 'Only the main group can approve Telegram users.' }],
+              isError: true
+            };
+          }
+
+          const data = {
+            type: 'telegram_approve',
+            userId: args.user_id,
+            timestamp: new Date().toISOString()
+          };
+
+          writeIpcFile(TASKS_DIR, data);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `Telegram user ${args.user_id} approved. They will be notified.`
+            }]
+          };
+        }
+      ),
+
+      tool(
+        'telegram_deny',
+        'Deny a Telegram user who requested access. Main group only.',
+        {
+          user_id: z.number().describe('The Telegram user ID to deny')
+        },
+        async (args) => {
+          if (!isMain) {
+            return {
+              content: [{ type: 'text', text: 'Only the main group can deny Telegram users.' }],
+              isError: true
+            };
+          }
+
+          const data = {
+            type: 'telegram_deny',
+            userId: args.user_id,
+            timestamp: new Date().toISOString()
+          };
+
+          writeIpcFile(TASKS_DIR, data);
+
+          return {
+            content: [{
+              type: 'text',
+              text: `Telegram user ${args.user_id} denied. They will be notified.`
+            }]
+          };
+        }
+      ),
+
+      tool(
+        'telegram_list_pending',
+        'List Telegram users waiting for access approval. Main group only.',
+        {},
+        async () => {
+          if (!isMain) {
+            return {
+              content: [{ type: 'text', text: 'Only the main group can list pending approvals.' }],
+              isError: true
+            };
+          }
+
+          const pendingFile = path.join(IPC_DIR, 'telegram_pending.json');
+
+          try {
+            if (!fs.existsSync(pendingFile)) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: 'No pending Telegram access requests.'
+                }]
+              };
+            }
+
+            const pending = JSON.parse(fs.readFileSync(pendingFile, 'utf-8'));
+            const entries = Object.values(pending) as Array<{userId: number; username?: string; firstName?: string; requestedAt: string; firstMessage?: string}>;
+
+            if (entries.length === 0) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: 'No pending Telegram access requests.'
+                }]
+              };
+            }
+
+            const formatted = entries.map(u =>
+              `- ID: ${u.userId} | @${u.username || 'N/A'} | ${u.firstName || 'Unknown'} | Requested: ${u.requestedAt}`
+            ).join('\n');
+
+            return {
+              content: [{
+                type: 'text',
+                text: `Pending Telegram access requests:\n${formatted}\n\nUse telegram_approve or telegram_deny with the user ID.`
+              }]
+            };
+          } catch (err) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Error reading pending approvals: ${err instanceof Error ? err.message : String(err)}`
+              }]
+            };
+          }
+        }
       )
     ]
   });
