@@ -29,3 +29,12 @@ export const TRIGGER_PATTERN = new RegExp(`^@${escapeRegex(ASSISTANT_NAME)}\\b`,
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const TIMEZONE = process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Telegram configuration
+export const TELEGRAM_CONFIG = {
+  enabled: true,
+  triggerPattern: new RegExp(`^@${escapeRegex(ASSISTANT_NAME)}\\b`, 'i'),
+  privateChatsEnabled: true,
+  groupsEnabled: true,
+  unifiedMainChannel: true,  // Private chats share context with WhatsApp main
+};

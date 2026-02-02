@@ -77,3 +77,20 @@ export interface TaskRunLog {
   result: string | null;
   error: string | null;
 }
+
+export interface TelegramChat {
+  id: number;
+  type: 'private' | 'group' | 'supergroup' | 'channel';
+  title?: string;
+  username?: string;
+  firstName?: string;
+}
+
+export interface RegisteredTelegramChat {
+  name: string;
+  folder: string;
+  trigger: string;
+  added_at: string;
+  platform: 'telegram';
+  chatType: 'private' | 'group';
+}

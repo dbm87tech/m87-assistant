@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
@@ -24,6 +25,7 @@ import { initDatabase, storeMessage, storeChatMetadata, getNewMessages, getMessa
 import { startSchedulerLoop } from './task-scheduler.js';
 import { runContainerAgent, writeTasksSnapshot, writeGroupsSnapshot, AvailableGroup } from './container-runner.js';
 import { loadJson, saveJson } from './utils.js';
+import { startTelegram, stopTelegram } from './telegram.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -522,6 +524,19 @@ async function connectWhatsApp(): Promise<void> {
       });
       startIpcWatcher();
       startMessageLoop();
+
+      // Start Telegram bot
+      startTelegram({
+        sendWhatsAppMessage: sendMessage,
+        getRegisteredGroups: () => registeredGroups,
+        getSessions: () => sessions,
+        setSessions: (newSessions) => {
+          sessions = { ...sessions, ...newSessions };
+          saveJson(path.join(DATA_DIR, 'sessions.json'), sessions);
+        }
+      }).catch(err => {
+        logger.error({ err }, 'Failed to start Telegram bot');
+      });
     }
   });
 
