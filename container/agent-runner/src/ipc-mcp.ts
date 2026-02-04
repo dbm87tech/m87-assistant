@@ -8,6 +8,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { spawnCoder, CoderTask } from './modal-coder.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -431,6 +432,80 @@ Use available_groups.json to find the JID for a group. The folder name should be
                 type: 'text',
                 text: `Error reading pending approvals: ${err instanceof Error ? err.message : String(err)}`
               }]
+            };
+          }
+        }
+      ),
+
+      tool(
+        'spawn_coder',
+        `Spawn a cloud coding agent to work on a git repository. The agent runs in an isolated Modal.com sandbox with full Claude Code capabilities.
+
+The agent will:
+1. Clone the specified repository
+2. Create a branch if specified
+3. Implement the requested changes
+4. Commit and push changes
+5. Optionally create a pull request
+
+This is useful for delegating coding tasks that need to modify real repositories.`,
+        {
+          repo_url: z.string().describe('Git repository URL to clone (e.g., "https://github.com/user/repo")'),
+          task: z.string().describe('Detailed description of what the coding agent should do'),
+          branch: z.string().optional().describe('Branch name to create for changes (e.g., "fix/login-bug")'),
+          base_branch: z.string().optional().describe('Base branch to branch from (default: "main")'),
+          create_pr: z.boolean().optional().describe('Whether to create a pull request after pushing'),
+          pr_title: z.string().optional().describe('Title for the pull request')
+        },
+        async (args) => {
+          // This is a long-running operation, acknowledge first
+          console.error(`[spawn_coder] Starting cloud coder for ${args.repo_url}`);
+
+          const task: CoderTask = {
+            repoUrl: args.repo_url,
+            taskDescription: args.task,
+            branch: args.branch,
+            baseBranch: args.base_branch,
+            createPr: args.create_pr,
+            prTitle: args.pr_title,
+          };
+
+          try {
+            const result = await spawnCoder(task);
+
+            if (result.success) {
+              let response = `Cloud coding agent completed successfully.\n\n`;
+              response += `**Output:**\n${result.output}`;
+
+              if (result.branch) {
+                response += `\n\n**Branch:** ${result.branch}`;
+              }
+              if (result.prUrl) {
+                response += `\n**Pull Request:** ${result.prUrl}`;
+              }
+
+              return {
+                content: [{
+                  type: 'text',
+                  text: response
+                }]
+              };
+            } else {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `Cloud coding agent failed: ${result.error}`
+                }],
+                isError: true
+              };
+            }
+          } catch (err) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Failed to spawn cloud coder: ${err instanceof Error ? err.message : String(err)}`
+              }],
+              isError: true
             };
           }
         }

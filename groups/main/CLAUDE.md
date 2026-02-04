@@ -31,6 +31,12 @@ When you learn something important:
 - Add recurring context directly to this CLAUDE.md
 - Always index new memory files at the top of CLAUDE.md
 
+## Projects Registry
+
+**Read `/workspace/group/projects.md`** to look up project names and their GitHub URLs.
+
+When a user mentions a project by name (e.g., "verychess", "the webapp"), look it up in projects.md to get the full repository URL. Don't ask for the full URL if the project is registered.
+
 ## Qwibit Ops Access
 
 You have access to Qwibit operations data at `/workspace/extra/qwibit-ops/` with these key areas:
@@ -243,3 +249,191 @@ Linear project management is available via MCP tools. Use these for issue tracki
 - `mcp__linear__create_comment` - Add comments
 
 Configuration: API key stored in `.env` as `LINEAR_API_KEY`.
+
+---
+
+## Cloud Coding Agents (Modal)
+
+You can spawn cloud coding agents to work on git repositories using Modal.com sandboxes.
+
+Use `mcp__nanoclaw__spawn_coder` with:
+- `repo_url` - Git repository URL (required)
+- `task` - Description of what to implement (required)
+- `branch` - Branch name to create (optional)
+- `base_branch` - Base branch to branch from (optional, default: main)
+- `create_pr` - Whether to create a pull request (optional)
+- `pr_title` - Title for the PR (optional)
+
+**Examples:**
+- "Spawn a coder to fix the login bug in https://github.com/company/app"
+- "Spawn a coder on https://github.com/company/api to add input validation, create branch feat/validation, and open a PR"
+
+The agent runs in an isolated cloud sandbox with full Claude Code capabilities. It will clone the repo, make changes, commit, push, and optionally create a PR.
+
+**Requirements:** Modal credentials must be set in `.env` (MODAL_TOKEN_ID, MODAL_TOKEN_SECRET) and secrets created in Modal dashboard (anthropic-coder-secret, github-coder-secret).
+
+---
+
+## Bug Triage Workflow
+
+When user says "bug triage" or describes a bug to triage, follow this workflow:
+
+### Step 1: Get Project
+- Check if user specified a project name or repo URL
+- If just a name (like "verychess"), look it up in `/workspace/group/projects.md`
+- If missing, ask: "Which project is this bug in?"
+
+### Step 2: Search Linear for Existing Bug
+Use `mcp__linear__search_issues` with key terms from the bug description.
+- If found: Use that issue, tell user "Found existing bug: [ID] - [title]"
+- If not found: Proceed to create
+
+### Step 3: Create Bug in Linear
+Use `mcp__linear__create_issue`:
+- title: Concise bug title
+- description: Full bug description
+- state: "Backlog" (or default triage state)
+Tell user: "Created bug ticket: [ID]"
+
+### Step 4: Move to In Progress
+Use `mcp__linear__update_issue` to set state to "In Progress" before spawning coder.
+
+### Step 5: Spawn Assessment Coder
+Use `mcp__nanoclaw__spawn_coder` with this task:
+```
+IMPORTANT: You are a ONE-SHOT agent. You have ONE execution to complete this task.
+There is no human to ask questions. You must make decisions and finish the job.
+Do not give up. Pursue every avenue until you succeed or definitively cannot proceed.
+
+You are assessing a bug for triage. DO NOT FIX IT - only analyze.
+
+Bug: <description>
+
+Your Mission (complete ALL of these):
+1. Explore the codebase structure
+2. Find ALL code related to this bug
+3. Identify the root cause with certainty
+4. Create a complete, actionable fix plan
+
+REQUIRED OUTPUT - You MUST include this exact format:
+
+### DIFFICULTY ASSESSMENT
+**Difficulty: [EASY/MEDIUM/HARD]**
+
+Criteria:
+- EASY: Simple isolated fix. High confidence. No schema changes. Few lines.
+- MEDIUM: Multiple files. Some decisions. No schema changes.
+- HARD: Complex. Schema migrations. Architectural decisions.
+
+### ROOT CAUSE
+<exact explanation of what causes the bug>
+
+### FIX PLAN
+<numbered steps with specific code changes>
+
+### FILES TO MODIFY
+<complete list of file paths>
+
+### CONFIDENCE
+<HIGH/MEDIUM/LOW and why>
+```
+
+### Step 6: Parse Response
+Extract from coder output:
+- Difficulty: EASY, MEDIUM, or HARD (default MEDIUM if unclear)
+- Fix plan
+- Files list
+- Confidence level
+
+### Step 7: Update Linear with Assessment
+Use `mcp__linear__create_comment` to add assessment to the bug ticket.
+
+### Step 8: Decide on Auto-Fix
+- **EASY**: Proceed to fix automatically
+- **MEDIUM/HARD**: Ask user "This is [DIFFICULTY]. Attempt fix anyway?"
+
+### Step 9: Spawn Fix Coder (if proceeding)
+Branch name: `triage/[issue-id]-[short-desc]`
+
+Use `mcp__nanoclaw__spawn_coder`:
+```
+repo_url: <from projects.md>
+branch: triage/[issue-id]-[short-desc]
+base_branch: main
+create_pr: true
+pr_title: "Fix: [bug title] ([issue-id])"
+task: |
+  CRITICAL: You are a ONE-SHOT agent. You have ONE execution - no retries, no human help.
+  You MUST complete this entire task before your session ends:
+  1. Implement the fix
+  2. Test it works (run any existing tests)
+  3. Commit and push
+  4. Create the PR
+
+  Do NOT stop partway. Do NOT say "I would do X" - actually DO X.
+  If you encounter obstacles, work around them. Finish the job.
+
+  Bug: <description>
+
+  Fix Plan (follow this exactly):
+  <from assessment>
+
+  Files to Modify:
+  <from assessment>
+
+  Required Actions:
+  1. Implement ALL changes from the fix plan
+  2. Run: git add -A && git commit -m "fix: <description>"
+  3. Run: git push -u origin <branch>
+  4. Run: gh pr create --title "<pr_title>" --body "Fixes <Linear issue URL>"
+
+  Output the PR URL when done.
+```
+
+### Step 10: Update Linear with PR
+Use `mcp__linear__create_comment` to add PR link.
+Use `mcp__linear__update_issue` to set state to "In Review".
+
+### Step 11: Report to User
+Send summary:
+- Bug ID and title
+- Difficulty assessment
+- Action taken (auto-fixed or needs manual)
+- PR link if created
+- Linear link
+
+---
+
+## Triage Monitoring (Scheduled Task)
+
+Schedule a recurring task to check on in-progress triage tickets:
+
+**Every 30 minutes**, check Linear for issues:
+- State: "In Progress"
+- Label: contains "triage" or "auto-fix"
+- Updated more than 20 minutes ago with no recent comments
+
+For each stuck ticket:
+1. Check if there's a triage/ branch with recent commits
+2. Check if a PR was created
+3. If no progress detected:
+   - Add comment: "⚠️ Auto-fix may have stalled. Checking status..."
+   - Notify user: "Triage for [ID] appears stuck. Manual intervention may be needed."
+   - Move back to "Backlog" if no PR exists
+
+To set this up, use:
+```
+mcp__nanoclaw__schedule_task with:
+  prompt: "Check for stuck triage tickets in Linear"
+  schedule_type: cron
+  schedule_value: "*/30 * * * *"
+  context_mode: isolated
+```
+
+**Example:**
+User: "bug triage: users can't upload images over 2MB in verychess"
+→ Look up verychess in projects.md
+→ Search Linear, create bug if needed
+→ Spawn assessment coder
+→ If EASY, spawn fix coder
+→ Report back with PR link
