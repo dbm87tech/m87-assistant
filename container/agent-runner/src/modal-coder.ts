@@ -24,6 +24,9 @@ export interface CoderResult {
 }
 
 function log(message: string): void {
+  // Use stdout for Modal dashboard visibility (stderr doesn't always show)
+  console.log(`[modal-coder] ${message}`);
+  // Also stderr for local debugging
   console.error(`[modal-coder] ${message}`);
 }
 
@@ -217,12 +220,13 @@ export async function spawnCoder(task: CoderTask): Promise<CoderResult> {
     await writePrompt.wait();
 
     log(`Running claude with prompt (${prompt.length} chars)...`);
+    log(`Sandbox ID for dashboard: ${sb.sandboxId}`);
 
     // Run Claude as root with timeout, verbose output, and stdin closed
-    // Combine stdout and stderr with 2>&1 for reliable capture
+    // Use script to create a PTY for better output capture and stream logs in real-time
     const claude = await sb.exec(
       ['bash', '-c',
-       `cd '${workdir}' && timeout 1200 claude -p "$(cat /tmp/prompt.txt)" --output-format text < /dev/null 2>&1`],
+       `cd '${workdir}' && echo "=== Claude Code Starting ===" && timeout 1200 claude -p "$(cat /tmp/prompt.txt)" --output-format text < /dev/null 2>&1; exitcode=$?; echo "=== Claude Code Exit: $exitcode ==="; exit $exitcode`],
       {
         secrets: agentSecrets,
         timeoutMs: 1500000,
@@ -234,6 +238,7 @@ export async function spawnCoder(task: CoderTask): Promise<CoderResult> {
     const stderr = await claude.stderr.readText();
 
     log(`Agent completed with exit code ${claudeExit}, stdout: ${stdout.length} chars`);
+    log(`Output preview: ${stdout.slice(0, 500)}...`);
     if (stdout.length === 0) {
       log(`No output captured, stderr: ${stderr.slice(0, 500)}`);
     }

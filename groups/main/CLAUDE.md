@@ -53,15 +53,15 @@ Read the CLAUDE.md files in each folder for role-specific context and workflows.
 - Team: Gavriel (founder, sales & client work), Lazer (founder, dealflow), Ali (PM)
 - Obsidian-based workflow with Kanban boards (PIPELINE.md, PORTFOLIO.md)
 
-## WhatsApp Formatting
+## Telegram Formatting
 
-Do NOT use markdown headings (##) in WhatsApp messages. Only use:
+For Telegram messages, use standard Markdown:
 - *Bold* (asterisks)
 - _Italic_ (underscores)
-- • Bullets (bullet points)
+- `Code` (backticks)
 - ```Code blocks``` (triple backticks)
 
-Keep messages clean and readable for WhatsApp.
+Keep messages concise and well-formatted.
 
 ---
 
@@ -85,83 +85,12 @@ Key paths inside the container:
 
 ---
 
-## Managing Groups
+## Telegram Groups
 
-### Finding Available Groups
+Telegram groups are auto-registered when the trigger word is used. Registered groups are stored in:
+- `/workspace/project/data/registered_telegram.json`
 
-Available groups are provided in `/workspace/ipc/available_groups.json`:
-
-```json
-{
-  "groups": [
-    {
-      "jid": "120363336345536173@g.us",
-      "name": "Family Chat",
-      "lastActivity": "2026-01-31T12:00:00.000Z",
-      "isRegistered": false
-    }
-  ],
-  "lastSync": "2026-01-31T12:00:00.000Z"
-}
-```
-
-Groups are ordered by most recent activity. The list is synced from WhatsApp daily.
-
-If a group the user mentions isn't in the list, request a fresh sync:
-
-```bash
-echo '{"type": "refresh_groups"}' > /workspace/ipc/tasks/refresh_$(date +%s).json
-```
-
-Then wait a moment and re-read `available_groups.json`.
-
-**Fallback**: Query the SQLite database directly:
-
-```bash
-sqlite3 /workspace/project/store/messages.db "
-  SELECT jid, name, last_message_time
-  FROM chats
-  WHERE jid LIKE '%@g.us' AND jid != '__group_sync__'
-  ORDER BY last_message_time DESC
-  LIMIT 10;
-"
-```
-
-### Registered Groups Config
-
-Groups are registered in `/workspace/project/data/registered_groups.json`:
-
-```json
-{
-  "1234567890-1234567890@g.us": {
-    "name": "Family Chat",
-    "folder": "family-chat",
-    "trigger": "@m87",
-    "added_at": "2024-01-31T12:00:00.000Z"
-  }
-}
-```
-
-Fields:
-- **Key**: The WhatsApp JID (unique identifier for the chat)
-- **name**: Display name for the group
-- **folder**: Folder name under `groups/` for this group's files and memory
-- **trigger**: The trigger word (usually same as global, but could differ)
-- **added_at**: ISO timestamp when registered
-
-### Adding a Group
-
-1. Query the database to find the group's JID
-2. Read `/workspace/project/data/registered_groups.json`
-3. Add the new group entry with `containerConfig` if needed
-4. Write the updated JSON back
-5. Create the group folder: `/workspace/project/groups/{folder-name}/`
-6. Optionally create an initial `CLAUDE.md` for the group
-
-Example folder name conventions:
-- "Family Chat" → `family-chat`
-- "Work Team" → `work-team`
-- Use lowercase, hyphens instead of spaces
+Private chats share context with the main channel (unified mode).
 
 #### Adding Additional Directories for a Group
 
@@ -274,29 +203,87 @@ The agent runs in an isolated cloud sandbox with full Claude Code capabilities. 
 
 ---
 
+## Agent Teams
+
+You can spawn teammate agents using the `Task` tool to work on subtasks in parallel. Teammates run inside your same container and share your filesystem.
+
+**When to use teams:**
+- Multi-step tasks with independent parts (e.g., "fix these 3 bugs", "research X and build Y")
+- Tasks combining research + implementation (one agent researches, another codes)
+- Any request where parallel work saves significant time
+
+**When NOT to use teams:**
+- Simple questions or quick lookups
+- Single-file changes or short tasks
+- Anything that takes under a minute solo
+
+**How to use:**
+```
+Task tool with:
+  prompt: "Clear description of what the teammate should do"
+  subagent_type: "general-purpose"  # has all tools (Bash, Read/Write, Web, etc.)
+```
+
+Other useful subagent types:
+- `Explore` — read-only, fast codebase search and research
+- `Plan` — read-only, architectural planning
+
+**Tips:**
+- Give each teammate a self-contained task with clear deliverables
+- Launch independent teammates in parallel (multiple Task calls in one response)
+- Use `Explore` agents for research — they're faster and cheaper than general-purpose
+- Teammates can use all your MCP tools (Linear, NanoClaw, etc.)
+
+---
+
 ## Bug Triage Workflow
 
-When user says "bug triage" or describes a bug to triage, follow this workflow:
+When user says "bug triage" or describes a bug to triage, follow this workflow.
 
-### Step 1: Get Project
+**IMPORTANT: Send progress updates using `mcp__nanoclaw__send_message` at each step!**
+
+### Step 1: Acknowledge & Get Project
+**Send message:** "🔍 Starting bug triage..."
 - Check if user specified a project name or repo URL
 - If just a name (like "verychess"), look it up in `/workspace/group/projects.md`
 - If missing, ask: "Which project is this bug in?"
+**Send message:** "📁 Project: [name] ([repo URL])"
 
 ### Step 2: Search Linear for Existing Bug
+**Send message:** "🔎 Searching Linear for existing bugs..."
 Use `mcp__linear__search_issues` with key terms from the bug description.
-- If found: Use that issue, tell user "Found existing bug: [ID] - [title]"
-- If not found: Proceed to create
+- If found: **Send message:** "📋 Found existing bug: [ID] - [title]"
+- If not found: **Send message:** "📋 No existing bug found, creating new ticket..."
 
 ### Step 3: Create Bug in Linear
-Use `mcp__linear__create_issue`:
-- title: Concise bug title
-- description: Full bug description
-- state: "Backlog" (or default triage state)
-Tell user: "Created bug ticket: [ID]"
+Use the Task agent to create the bug with proper team/label/project assignment:
+
+**Send to Task agent:**
+```
+Create a Linear bug issue with these details:
+- Title: [bug title]
+- Description: [full description]
+- Priority: High (2)
+- Project: VeryChess (M87)
+
+IMPORTANT: Make sure to:
+1. Find the correct team UUID from an existing issue
+2. Add the "Bug" label
+3. Set the "Bugs" project/milestone
+
+Return the issue ID and URL.
+```
+
+**IMPORTANT**: Every bug MUST have:
+1. Correct team assignment
+2. "Bug" label applied
+3. "Bugs" project/milestone set
+
+**Send message:** "✅ Created bug ticket: [ID] - [title] (labeled as Bug, in Bugs milestone)"
 
 ### Step 4: Move to In Progress
-Use `mcp__linear__update_issue` to set state to "In Progress" before spawning coder.
+Use `mcp__linear__update_issue` to set state to "In Progress".
+**Send message:** "⏳ Ticket moved to In Progress. Spawning assessment agent..."
 
 ### Step 5: Spawn Assessment Coder
 Use `mcp__nanoclaw__spawn_coder` with this task:
@@ -338,21 +325,35 @@ Criteria:
 <HIGH/MEDIUM/LOW and why>
 ```
 
-### Step 6: Parse Response
+### Step 6: Parse Response & Report Assessment
 Extract from coder output:
 - Difficulty: EASY, MEDIUM, or HARD (default MEDIUM if unclear)
 - Fix plan
 - Files list
 - Confidence level
 
+**Send message:**
+```
+🎯 Assessment Complete!
+
+Difficulty: [EASY/MEDIUM/HARD]
+Confidence: [HIGH/MEDIUM/LOW]
+Files to modify: [count] files
+
+Root cause: [brief summary]
+```
+
 ### Step 7: Update Linear with Assessment
-Use `mcp__linear__create_comment` to add assessment to the bug ticket.
+Use `mcp__linear__create_comment` to add full assessment to the bug ticket.
+**Send message:** "📝 Assessment added to Linear ticket"
 
 ### Step 8: Decide on Auto-Fix
-- **EASY**: Proceed to fix automatically
-- **MEDIUM/HARD**: Ask user "This is [DIFFICULTY]. Attempt fix anyway?"
+- **EASY**: **Send message:** "✅ EASY fix - proceeding with auto-fix..."
+- **MEDIUM/HARD**: **Send message:** "⚠️ This is [DIFFICULTY]. Attempt fix anyway? Reply 'yes' to proceed."
+  - Wait for user response before continuing
 
 ### Step 9: Spawn Fix Coder (if proceeding)
+**Send message:** "🔧 Spawning fix agent... Branch: triage/[issue-id]-[short-desc]"
 Branch name: `triage/[issue-id]-[short-desc]`
 
 Use `mcp__nanoclaw__spawn_coder`:
@@ -366,9 +367,10 @@ task: |
   CRITICAL: You are a ONE-SHOT agent. You have ONE execution - no retries, no human help.
   You MUST complete this entire task before your session ends:
   1. Implement the fix
-  2. Test it works (run any existing tests)
-  3. Commit and push
-  4. Create the PR
+  2. Run lint checks and fix any issues
+  3. Test it works (run any existing tests)
+  4. Commit and push
+  5. Create the PR
 
   Do NOT stop partway. Do NOT say "I would do X" - actually DO X.
   If you encounter obstacles, work around them. Finish the job.
@@ -383,24 +385,41 @@ task: |
 
   Required Actions:
   1. Implement ALL changes from the fix plan
-  2. Run: git add -A && git commit -m "fix: <description>"
-  3. Run: git push -u origin <branch>
-  4. Run: gh pr create --title "<pr_title>" --body "Fixes <Linear issue URL>"
+  2. Run lint check: npm run lint (or appropriate linter for project)
+  3. Fix any lint errors automatically if possible: npm run lint:fix
+  4. If lint errors remain, fix them manually
+  5. Run: git add -A && git commit -m "fix: <description>"
+  6. Run: git push -u origin <branch>
+  7. Run: gh pr create --title "<pr_title>" --body "Fixes <Linear issue URL>"
 
   Output the PR URL when done.
 ```
 
-### Step 10: Update Linear with PR
-Use `mcp__linear__create_comment` to add PR link.
-Use `mcp__linear__update_issue` to set state to "In Review".
+### Step 10: Handle Fix Result
+If fix coder succeeded (PR URL in output):
+- **Send message:** "✅ Fix complete! PR created."
+- Use `mcp__linear__create_comment` to add PR link
+- Use `mcp__linear__update_issue` to set state to "In Review"
 
-### Step 11: Report to User
-Send summary:
-- Bug ID and title
-- Difficulty assessment
-- Action taken (auto-fixed or needs manual)
-- PR link if created
-- Linear link
+If fix coder failed:
+- **Send message:** "❌ Auto-fix failed. Adding notes to ticket for manual review."
+- Use `mcp__linear__create_comment` with error details
+- Use `mcp__linear__update_issue` to move back to "Backlog"
+
+### Step 11: Final Report
+**Send message with full summary:**
+```
+🏁 Bug Triage Complete
+
+📋 Ticket: [ID] - [title]
+🎯 Difficulty: [EASY/MEDIUM/HARD]
+📊 Status: [In Review / Needs Manual Fix]
+
+🔗 Links:
+• Linear: [URL]
+• PR: [URL or "N/A"]
+• Branch: triage/[branch-name]
+```
 
 ---
 

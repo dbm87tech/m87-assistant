@@ -239,10 +239,12 @@ async function main(): Promise<void> {
       options: {
         cwd: '/workspace/group',
         resume: input.sessionId,
+        model: process.env.CLAUDE_MODEL || 'sonnet', // 'sonnet', 'opus', 'haiku'
         allowedTools: [
           'Bash',
           'Read', 'Write', 'Edit', 'Glob', 'Grep',
           'WebSearch', 'WebFetch',
+          'Task',
           'mcp__nanoclaw__*',
           'mcp__linear__*'
         ],

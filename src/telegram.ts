@@ -22,7 +22,6 @@ const logger = pino({
 
 let bot: Telegraf | null = null;
 let telegramSessions: Record<string, string> = {};
-let sendWhatsAppMessage: ((jid: string, text: string) => Promise<void>) | null = null;
 let getRegisteredGroups: (() => Record<string, RegisteredGroup>) | null = null;
 let getSessions: (() => Record<string, string>) | null = null;
 let setSessions: ((sessions: Record<string, string>) => void) | null = null;
@@ -163,59 +162,40 @@ export function unpairUser(userId: number): boolean {
   return false;
 }
 
-function getMainChannelJid(): string | null {
-  // Read registered_groups.json to find the main channel's JID
-  const groupsFile = path.join(DATA_DIR, 'registered_groups.json');
-  try {
-    if (fs.existsSync(groupsFile)) {
-      const groups = JSON.parse(fs.readFileSync(groupsFile, 'utf-8'));
-      for (const [jid, group] of Object.entries(groups)) {
-        if ((group as any).folder === MAIN_GROUP_FOLDER) {
-          return jid;
-        }
-      }
-    }
-  } catch (err) {
-    logger.error({ err }, 'Failed to read registered groups');
-  }
-  return null;
-}
-
 async function notifyAdminOfAccessRequest(
   userId: number,
   username?: string,
   firstName?: string,
   firstMessage?: string
 ): Promise<void> {
-  // Find main channel JID
-  const mainJid = getMainChannelJid();
-  if (!mainJid) {
-    logger.warn('Cannot notify admin: main channel JID not found');
+  // Get admin chat ID from environment or use a default admin user
+  const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+
+  if (!adminChatId) {
+    logger.warn('Cannot notify admin: TELEGRAM_ADMIN_CHAT_ID not set');
     return;
   }
-
-  // Write IPC message to main channel
-  const ipcDir = path.join(DATA_DIR, 'ipc', MAIN_GROUP_FOLDER, 'messages');
-  fs.mkdirSync(ipcDir, { recursive: true });
 
   const userDisplay = username ? `@${username}` : firstName || `User ${userId}`;
   const messagePreview = firstMessage
     ? `\n\nFirst message: "${firstMessage.slice(0, 100)}${firstMessage.length > 100 ? '...' : ''}"`
     : '';
 
-  const notification = {
-    type: 'message',
-    chatJid: mainJid,
-    text: `*Telegram Access Request*\n\n` +
-      `${userDisplay} (ID: ${userId}) wants to access the bot.${messagePreview}\n\n` +
-      `Reply:\n` +
-      `• "approve telegram ${userId}" to grant access\n` +
-      `• "deny telegram ${userId}" to reject`
-  };
+  const notification = `*Telegram Access Request*\n\n` +
+    `${userDisplay} (ID: ${userId}) wants to access the bot.${messagePreview}\n\n` +
+    `Reply:\n` +
+    `• "approve telegram ${userId}" to grant access\n` +
+    `• "deny telegram ${userId}" to reject`;
 
-  const filename = `telegram-approval-${userId}-${Date.now()}.json`;
-  fs.writeFileSync(path.join(ipcDir, filename), JSON.stringify(notification));
-  logger.info({ userId, username, mainJid }, 'Admin notified of Telegram access request');
+  // Send directly via Telegram bot
+  if (bot) {
+    try {
+      await bot.telegram.sendMessage(parseInt(adminChatId, 10), notification, { parse_mode: 'Markdown' });
+      logger.info({ userId, username, adminChatId }, 'Admin notified of Telegram access request');
+    } catch (err) {
+      logger.error({ err, userId }, 'Failed to notify admin of access request');
+    }
+  }
 }
 
 function loadTelegramChats(): Record<string, RegisteredGroup> {
@@ -452,7 +432,6 @@ async function sendTelegramResponse(ctx: Context, text: string): Promise<void> {
 let telegramStarted = false;
 
 export async function startTelegram(options?: {
-  sendWhatsAppMessage?: (jid: string, text: string) => Promise<void>;
   getRegisteredGroups?: () => Record<string, RegisteredGroup>;
   getSessions?: () => Record<string, string>;
   setSessions?: (sessions: Record<string, string>) => void;
@@ -469,8 +448,8 @@ export async function startTelegram(options?: {
   logger.info({ hasToken: !!token, configEnabled: TELEGRAM_CONFIG.enabled }, 'Telegram config check');
 
   if (!token) {
-    logger.info('TELEGRAM_BOT_TOKEN not set, Telegram disabled');
-    return;
+    logger.error('TELEGRAM_BOT_TOKEN not set - cannot start');
+    throw new Error('TELEGRAM_BOT_TOKEN is required');
   }
 
   if (!TELEGRAM_CONFIG.enabled) {
@@ -482,7 +461,6 @@ export async function startTelegram(options?: {
 
   // Store callbacks for integration with main app
   if (options) {
-    sendWhatsAppMessage = options.sendWhatsAppMessage || null;
     getRegisteredGroups = options.getRegisteredGroups || null;
     getSessions = options.getSessions || null;
     setSessions = options.setSessions || null;
@@ -525,6 +503,41 @@ export function stopTelegram(): void {
   if (bot) {
     bot.stop();
     logger.info('Telegram bot stopped');
+  }
+}
+
+/**
+ * Send a message to a Telegram chat.
+ * Used by IPC handler to route messages to Telegram instead of WhatsApp.
+ */
+export async function sendTelegramMessage(chatId: number, text: string): Promise<boolean> {
+  if (!bot) {
+    logger.warn({ chatId }, 'Cannot send Telegram message: bot not started');
+    return false;
+  }
+
+  try {
+    // Telegram has a 4096 char limit
+    const maxLen = 4000;
+    if (text.length <= maxLen) {
+      try {
+        await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+      } catch {
+        // Retry without markdown if it fails
+        await bot.telegram.sendMessage(chatId, text);
+      }
+    } else {
+      // Split into chunks
+      for (let i = 0; i < text.length; i += maxLen) {
+        const chunk = text.slice(i, i + maxLen);
+        await bot.telegram.sendMessage(chatId, chunk);
+      }
+    }
+    logger.info({ chatId, length: text.length }, 'Telegram message sent');
+    return true;
+  } catch (err) {
+    logger.error({ chatId, err }, 'Failed to send Telegram message');
+    return false;
   }
 }
 

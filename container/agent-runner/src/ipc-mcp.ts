@@ -43,7 +43,7 @@ export function createIpcMcp(ctx: IpcMcpContext) {
     tools: [
       tool(
         'send_message',
-        'Send a message to the current WhatsApp group. Use this to proactively share information or updates.',
+        'Send a message to the current Telegram chat. Use this to proactively share information, progress updates, or results.',
         {
           text: z.string().describe('The message text to send')
         },
